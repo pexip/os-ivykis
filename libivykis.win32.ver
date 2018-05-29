@@ -33,6 +33,7 @@ global:
 	iv_quit;
 	iv_main;
 	iv_deinit;
+	iv_poll_method_name;
 
 	# iv_task
 	IV_TASK_INIT;
@@ -46,10 +47,14 @@ global:
 	iv_thread_get_id;
 	iv_thread_list_children;
 
+	# iv_tid
+	iv_get_thread_id;
+
 	# iv_timer
 	iv_invalidate_now;
 	iv_validate_now;
 	__iv_now_location;
+	__iv_now_location_valid;
 	IV_TIMER_INIT;
 	iv_timer_register;
 	iv_timer_unregister;

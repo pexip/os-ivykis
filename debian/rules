@@ -8,3 +8,5 @@ override_dh_installdocs:
 
 %:
 	dh $@ --with autoreconf
+
+.PHONY: override_dh_installdocs

@@ -21,9 +21,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/poll.h>
+#include <poll.h>
 #include "iv_private.h"
-#include "iv_fd_private.h"
 
 static int iv_fd_poll_init(struct iv_state *st)
 {
@@ -42,29 +41,10 @@ static int iv_fd_poll_init(struct iv_state *st)
 	return 0;
 }
 
-static void iv_fd_poll_poll(struct iv_state *st,
-			    struct iv_list_head *active, struct timespec *to)
+static void
+iv_fd_poll_activate_fds(struct iv_state *st, struct iv_list_head *active)
 {
-	int ret;
 	int i;
-
-#if _AIX
-	/*
-	 * AIX sometimes leaves errno uninitialized even if poll
-	 * returns -1.
-	 */
-	errno = EINTR;
-#endif
-
-	ret = poll(st->u.poll.pfds, st->u.poll.num_regd_fds,
-		   1000 * to->tv_sec + ((to->tv_nsec + 999999) / 1000000));
-	if (ret < 0) {
-		if (errno == EINTR)
-			return;
-
-		iv_fatal("iv_fd_poll_poll: got error %d[%s]", errno,
-			 strerror(errno));
-	}
 
 	for (i = 0; i < st->u.poll.num_regd_fds; i++) {
 		struct iv_fd_ *fd;
@@ -82,6 +62,37 @@ static void iv_fd_poll_poll(struct iv_state *st,
 		if (revents & (POLLERR | POLLHUP))
 			iv_fd_make_ready(active, fd, MASKERR);
 	}
+}
+
+static int iv_fd_poll_poll(struct iv_state *st,
+			   struct iv_list_head *active,
+			   const struct timespec *abs)
+{
+	int ret;
+
+#if _AIX
+	/*
+	 * AIX sometimes leaves errno uninitialized even if poll
+	 * returns -1.
+	 */
+	errno = EINTR;
+#endif
+
+	ret = poll(st->u.poll.pfds, st->u.poll.num_regd_fds, to_msec(st, abs));
+
+	__iv_invalidate_now(st);
+
+	if (ret < 0) {
+		if (errno == EINTR)
+			return 1;
+
+		iv_fatal("iv_fd_poll_poll: got error %d[%s]", errno,
+			 strerror(errno));
+	}
+
+	iv_fd_poll_activate_fds(st, active);
+
+	return 1;
 }
 
 static void iv_fd_poll_register_fd(struct iv_state *st, struct iv_fd_ *fd)
@@ -106,9 +117,6 @@ static int bits_to_poll_mask(int bits)
 
 static void iv_fd_poll_notify_fd(struct iv_state *st, struct iv_fd_ *fd)
 {
-	if (fd->registered_bands == fd->wanted_bands)
-		return;
-
 	if (fd->u.index == -1 && fd->wanted_bands) {
 		fd->u.index = st->u.poll.num_regd_fds++;
 		st->u.poll.pfds[fd->u.index].fd = fd->fd;
@@ -133,8 +141,6 @@ static void iv_fd_poll_notify_fd(struct iv_state *st, struct iv_fd_ *fd)
 		st->u.poll.pfds[fd->u.index].events =
 			bits_to_poll_mask(fd->wanted_bands);
 	}
-
-	fd->registered_bands = fd->wanted_bands;
 }
 
 static int iv_fd_poll_notify_fd_sync(struct iv_state *st, struct iv_fd_ *fd)
@@ -163,8 +169,7 @@ static void iv_fd_poll_deinit(struct iv_state *st)
 	free(st->u.poll.pfds);
 }
 
-
-struct iv_fd_poll_method iv_fd_poll_method_poll = {
+const struct iv_fd_poll_method iv_fd_poll_method_poll = {
 	.name		= "poll",
 	.init		= iv_fd_poll_init,
 	.poll		= iv_fd_poll_poll,
@@ -173,3 +178,47 @@ struct iv_fd_poll_method iv_fd_poll_method_poll = {
 	.notify_fd_sync	= iv_fd_poll_notify_fd_sync,
 	.deinit		= iv_fd_poll_deinit,
 };
+
+
+#ifdef HAVE_PPOLL
+static int iv_fd_poll_ppoll(struct iv_state *st,
+			    struct iv_list_head *active,
+			    const struct timespec *abs)
+{
+	struct pollfd *fds = st->u.poll.pfds;
+	int nfds = st->u.poll.num_regd_fds;
+	struct timespec rel;
+	int ret;
+
+	ret = ppoll(fds, nfds, to_relative(st, &rel, abs), NULL);
+
+	__iv_invalidate_now(st);
+
+	if (ret < 0) {
+		if (errno == EINTR)
+			return 1;
+
+		if (errno == ENOSYS) {
+			method = &iv_fd_poll_method_poll;
+			return iv_fd_poll_poll(st, active, abs);
+		}
+
+		iv_fatal("iv_fd_poll_ppoll: got error %d[%s]", errno,
+			 strerror(errno));
+	}
+
+	iv_fd_poll_activate_fds(st, active);
+
+	return 1;
+}
+
+const struct iv_fd_poll_method iv_fd_poll_method_ppoll = {
+	.name		= "ppoll",
+	.init		= iv_fd_poll_init,
+	.poll		= iv_fd_poll_ppoll,
+	.register_fd	= iv_fd_poll_register_fd,
+	.notify_fd	= iv_fd_poll_notify_fd,
+	.notify_fd_sync	= iv_fd_poll_notify_fd_sync,
+	.deinit		= iv_fd_poll_deinit,
+};
+#endif

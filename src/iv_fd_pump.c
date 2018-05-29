@@ -22,12 +22,12 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <iv.h>
+#include <iv_fd_pump.h>
 #include <iv_list.h>
 #include <iv_tls.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include "config.h"
-#include "iv_fd_pump.h"
+#include "iv_private.h"
 
 /* thread state handling ****************************************************/
 struct iv_fd_pump_thr_info {
@@ -65,6 +65,43 @@ static void iv_fd_pump_tls_init(void)
 }
 
 
+/* pipe acquisition *********************************************************/
+#ifdef HAVE_SYS_SYSCALL_H
+#include <sys/syscall.h>
+#endif
+
+#if (defined(__NR_pipe2) || defined(HAVE_PIPE2)) && defined(O_CLOEXEC)
+static int pipe2_support = 1;
+#endif
+
+static int grab_pipe(int *fd)
+{
+	int ret;
+
+#if (defined(__NR_pipe2) || defined(HAVE_PIPE2)) && defined(O_CLOEXEC)
+	if (pipe2_support) {
+#ifdef __NR_pipe2
+		ret = syscall(__NR_pipe2, fd, O_CLOEXEC);
+#else
+		ret = pipe2(fd, O_CLOEXEC);
+#endif
+		if (ret == 0 || errno != ENOSYS)
+			return ret;
+
+		pipe2_support = 0;
+	}
+#endif
+
+	ret = pipe(fd);
+	if (ret == 0) {
+		iv_fd_set_cloexec(fd[0]);
+		iv_fd_set_cloexec(fd[1]);
+	}
+
+	return ret;
+}
+
+
 /* buffer management ********************************************************/
 #define MAX_CACHED_BUFS		20
 #define BUF_SIZE		4096
@@ -99,7 +136,7 @@ static struct iv_fd_pump_buf *buf_alloc(void)
 
 	buf = malloc(size);
 
-	if (buf != NULL && splice_available && pipe(buf->u.pfd) < 0) {
+	if (buf != NULL && splice_available && grab_pipe(buf->u.pfd) < 0) {
 		free(buf);
 		buf = NULL;
 	}
@@ -328,15 +365,11 @@ static int iv_fd_pump_try_output(struct iv_fd_pump *ip)
 
 static int __iv_fd_pump_pump(struct iv_fd_pump *ip)
 {
-	if (!ip->full && ip->saw_fin == 0) {
-		if (iv_fd_pump_try_input(ip))
-			return -1;
-	}
+	if (!ip->full && ip->saw_fin == 0 && iv_fd_pump_try_input(ip))
+		return -1;
 
-	if (ip->bytes || ip->saw_fin == 1) {
-		if (iv_fd_pump_try_output(ip))
-			return -1;
-	}
+	if (ip->bytes && iv_fd_pump_try_output(ip))
+		return -1;
 
 
 	switch (ip->saw_fin) {
@@ -373,7 +406,7 @@ int iv_fd_pump_pump(struct iv_fd_pump *ip)
 	return ret;
 }
 
-int iv_fd_pump_is_done(struct iv_fd_pump *ip)
+int iv_fd_pump_is_done(const struct iv_fd_pump *ip)
 {
 	return !!(ip->saw_fin == 2);
 }

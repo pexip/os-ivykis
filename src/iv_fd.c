@@ -25,11 +25,10 @@
 #include <string.h>
 #include <sys/resource.h>
 #include "iv_private.h"
-#include "iv_fd_private.h"
 
 /* internal use *************************************************************/
 int				maxfd;
-struct iv_fd_poll_method	*method;
+const struct iv_fd_poll_method	*method;
 
 static void sanitise_nofile_rlimit(int euid)
 {
@@ -62,7 +61,7 @@ static void sanitise_nofile_rlimit(int euid)
 	}
 }
 
-static int method_is_excluded(char *exclude, char *name)
+static int method_is_excluded(const char *exclude, const char *name)
 {
 	if (exclude != NULL) {
 		char method_name[64];
@@ -78,8 +77,8 @@ static int method_is_excluded(char *exclude, char *name)
 	return 0;
 }
 
-static void consider_poll_method(struct iv_state *st, char *exclude,
-				 struct iv_fd_poll_method *m)
+static void consider_poll_method(struct iv_state *st, const char *exclude,
+				 const struct iv_fd_poll_method *m)
 {
 	if (method == NULL && !method_is_excluded(exclude, m->name)) {
 		if (m->init(st) >= 0)
@@ -104,16 +103,23 @@ static void iv_fd_init_first_thread(struct iv_state *st)
 		exclude = NULL;
 
 #ifdef HAVE_PORT_CREATE
+	consider_poll_method(st, exclude, &iv_fd_poll_method_port_timer);
 	consider_poll_method(st, exclude, &iv_fd_poll_method_port);
 #endif
 #ifdef HAVE_SYS_DEVPOLL_H
 	consider_poll_method(st, exclude, &iv_fd_poll_method_dev_poll);
+#endif
+#if defined(HAVE_EPOLL_CREATE) && defined(HAVE_TIMERFD_CREATE)
+	consider_poll_method(st, exclude, &iv_fd_poll_method_epoll_timerfd);
 #endif
 #ifdef HAVE_EPOLL_CREATE
 	consider_poll_method(st, exclude, &iv_fd_poll_method_epoll);
 #endif
 #ifdef HAVE_KQUEUE
 	consider_poll_method(st, exclude, &iv_fd_poll_method_kqueue);
+#endif
+#ifdef HAVE_PPOLL
+	consider_poll_method(st, exclude, &iv_fd_poll_method_ppoll);
 #endif
 	consider_poll_method(st, exclude, &iv_fd_poll_method_poll);
 
@@ -128,7 +134,6 @@ void iv_fd_init(struct iv_state *st)
 	else if (method->init(st) < 0)
 		iv_fatal("iv_init: can't initialize event dispatcher");
 
-	st->numfds = 0;
 	st->handled_fd = NULL;
 }
 
@@ -137,14 +142,69 @@ void iv_fd_deinit(struct iv_state *st)
 	method->deinit(st);
 }
 
-void iv_fd_poll_and_run(struct iv_state *st, struct timespec *to)
+static int timespec_cmp(const struct timespec *a, const struct timespec *b)
+{
+	if (a != NULL) {
+		if (a->tv_sec < b->tv_sec)
+			return -1;
+
+		if (a->tv_sec > b->tv_sec)
+			return 1;
+
+		if (a->tv_nsec < b->tv_nsec)
+			return -1;
+
+		if (a->tv_nsec > b->tv_nsec)
+			return 1;
+
+		return 0;
+	}
+
+	return 1;
+}
+
+static int iv_fd_timeout_check(struct iv_state *st, const struct timespec *abs)
+{
+	int cmp;
+
+	cmp = timespec_cmp(abs, &st->last_abs);
+
+	if (st->last_abs_count == 5) {
+		if (cmp >= 0)
+			return 1;
+
+		method->clear_poll_timeout(st);
+	}
+
+	if (cmp == 0) {
+		if (st->last_abs_count < 5)
+			st->last_abs_count++;
+
+		if (st->last_abs_count == 5)
+			return method->set_poll_timeout(st, abs);
+	} else if (abs != NULL) {
+		st->last_abs_count = 1;
+		st->last_abs = *abs;
+	} else {
+		st->last_abs_count = 0;
+	}
+
+	return 0;
+}
+
+int iv_fd_poll_and_run(struct iv_state *st, const struct timespec *abs)
 {
 	struct iv_list_head active;
-
-	__iv_invalidate_now(st);
+	int run_timers;
 
 	INIT_IV_LIST_HEAD(&active);
-	method->poll(st, &active, to);
+	if (method->set_poll_timeout != NULL && iv_fd_timeout_check(st, abs)) {
+		run_timers = method->poll(st, &active, NULL);
+		if (run_timers)
+			st->last_abs_count = 0;
+	} else {
+		run_timers = method->poll(st, &active, abs);
+	}
 
 	while (!iv_list_empty(&active)) {
 		struct iv_fd_ *fd;
@@ -166,6 +226,8 @@ void iv_fd_poll_and_run(struct iv_state *st, struct timespec *to)
 			if (fd->handler_out != NULL)
 				fd->handler_out(fd->cookie);
 	}
+
+	return run_timers;
 }
 
 void iv_fd_make_ready(struct iv_list_head *active, struct iv_fd_ *fd, int bands)
@@ -349,7 +411,7 @@ void iv_fd_unregister(struct iv_fd *_fd)
 		st->handled_fd = NULL;
 }
 
-int iv_fd_registered(struct iv_fd *_fd)
+int iv_fd_registered(const struct iv_fd *_fd)
 {
 	struct iv_fd_ *fd = (struct iv_fd_ *)_fd;
 

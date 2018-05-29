@@ -1,6 +1,6 @@
 /*
  * ivykis, an event handling library
- * Copyright (C) 2002, 2003, 2009 Lennert Buytenhek
+ * Copyright (C) 2002, 2003, 2009, 2012, 2013 Lennert Buytenhek
  * Dedicated to Marija Kulikova.
  *
  * This library is free software; you can redistribute it and/or modify
@@ -26,7 +26,6 @@
 #include <sys/event.h>
 #include <sys/time.h>
 #include "iv_private.h"
-#include "iv_fd_private.h"
 
 #ifndef EVFILT_USER
 #define EVFILT_USER	(-11)
@@ -49,8 +48,9 @@ static int iv_fd_kqueue_init(struct iv_state *st)
 
 	iv_fd_set_cloexec(kqueue_fd);
 
-	st->u.kqueue.kqueue_fd = kqueue_fd;
 	INIT_IV_LIST_HEAD(&st->u.kqueue.notify);
+	st->u.kqueue.kqueue_fd = kqueue_fd;
+	st->u.kqueue.timeout_pending = 0;
 
 	return 0;
 }
@@ -113,8 +113,6 @@ static void kevent_retry(char *name, struct iv_state *st,
 static void
 iv_fd_kqueue_upload(struct iv_state *st, struct kevent *kev, int size, int *num)
 {
-	*num = 0;
-
 	while (!iv_list_empty(&st->u.kqueue.notify)) {
 		struct iv_fd_ *fd;
 
@@ -131,23 +129,63 @@ iv_fd_kqueue_upload(struct iv_state *st, struct kevent *kev, int size, int *num)
 	}
 }
 
-static void iv_fd_kqueue_poll(struct iv_state *st,
-			      struct iv_list_head *active, struct timespec *to)
+static int
+iv_fd_kqueue_set_poll_timeout(struct iv_state *st, const struct timespec *abs)
 {
-	struct kevent kev[UPLOAD_BATCH];
+	st->u.kqueue.timeout_pending = 1;
+	st->u.kqueue.timeout = abs;
+
+	return 1;
+}
+
+static void iv_fd_kqueue_clear_poll_timeout(struct iv_state *st)
+{
+	st->u.kqueue.timeout_pending = 1;
+	st->u.kqueue.timeout = NULL;
+}
+
+static int iv_fd_kqueue_poll(struct iv_state *st,
+			     struct iv_list_head *active,
+			     const struct timespec *abs)
+{
 	int num;
-	struct kevent batch[st->numfds ? : 1];
+	struct kevent kev[UPLOAD_BATCH];
+	int run_timers;
+	struct kevent batch[2 * st->numfds + 1];
+	struct timespec rel;
 	int ret;
 	int run_events;
 	int i;
 
+	num = 0;
+
+	if (st->u.kqueue.timeout_pending) {
+		st->u.kqueue.timeout_pending = 0;
+
+		if (st->u.kqueue.timeout != NULL) {
+			EV_SET(&kev[num], (intptr_t)&st->u.kqueue.timeout,
+			       EVFILT_TIMER,
+			       EV_ADD | EV_ENABLE | EV_ONESHOT | EV_CLEAR, 0,
+			       to_msec(st, st->u.kqueue.timeout), NULL);
+		} else {
+			EV_SET(&kev[num], (intptr_t)&st->u.kqueue.timeout,
+			       EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+		}
+		num++;
+	}
+
 	iv_fd_kqueue_upload(st, kev, UPLOAD_BATCH, &num);
 
+	run_timers = (abs != NULL) ? 1 : 0;
+
 	ret = kevent(st->u.kqueue.kqueue_fd, kev, num,
-		     batch, ARRAY_SIZE(batch), to);
+		     batch, ARRAY_SIZE(batch), to_relative(st, &rel, abs));
+
+	__iv_invalidate_now(st);
+
 	if (ret < 0) {
 		if (errno == EINTR)
-			return;
+			return run_timers;
 
 		iv_fatal("iv_fd_kqueue_poll: got error %d[%s]", errno,
 			 strerror(errno));
@@ -156,6 +194,11 @@ static void iv_fd_kqueue_poll(struct iv_state *st,
 	run_events = 0;
 	for (i = 0; i < ret; i++) {
 		struct iv_fd_ *fd;
+
+		if (batch[i].filter == EVFILT_TIMER) {
+			run_timers = 1;
+			continue;
+		}
 
 		if (batch[i].filter == EVFILT_USER) {
 			run_events = 1;
@@ -183,6 +226,8 @@ static void iv_fd_kqueue_poll(struct iv_state *st,
 
 	if (run_events)
 		iv_event_run_pending_events();
+
+	return run_timers;
 }
 
 static void iv_fd_kqueue_upload_all(struct iv_state *st)
@@ -190,6 +235,7 @@ static void iv_fd_kqueue_upload_all(struct iv_state *st)
 	struct kevent kev[UPLOAD_BATCH];
 	int num;
 
+	num = 0;
 	iv_fd_kqueue_upload(st, kev, UPLOAD_BATCH, &num);
 
 	if (num)
@@ -277,15 +323,17 @@ static void iv_fd_kqueue_event_send(struct iv_state *dest)
 	kevent_retry("iv_fd_kqueue_event_send", dest, &send, 1);
 }
 
-struct iv_fd_poll_method iv_fd_poll_method_kqueue = {
-	.name		= "kqueue",
-	.init		= iv_fd_kqueue_init,
-	.poll		= iv_fd_kqueue_poll,
-	.unregister_fd	= iv_fd_kqueue_unregister_fd,
-	.notify_fd	= iv_fd_kqueue_notify_fd,
-	.notify_fd_sync	= iv_fd_kqueue_notify_fd_sync,
-	.deinit		= iv_fd_kqueue_deinit,
-	.event_rx_on	= iv_fd_kqueue_event_rx_on,
-	.event_rx_off	= iv_fd_kqueue_event_rx_off,
-	.event_send	= iv_fd_kqueue_event_send,
+const struct iv_fd_poll_method iv_fd_poll_method_kqueue = {
+	.name			= "kqueue",
+	.init			= iv_fd_kqueue_init,
+	.set_poll_timeout	= iv_fd_kqueue_set_poll_timeout,
+	.clear_poll_timeout	= iv_fd_kqueue_clear_poll_timeout,
+	.poll			= iv_fd_kqueue_poll,
+	.unregister_fd		= iv_fd_kqueue_unregister_fd,
+	.notify_fd		= iv_fd_kqueue_notify_fd,
+	.notify_fd_sync		= iv_fd_kqueue_notify_fd_sync,
+	.deinit			= iv_fd_kqueue_deinit,
+	.event_rx_on		= iv_fd_kqueue_event_rx_on,
+	.event_rx_off		= iv_fd_kqueue_event_rx_off,
+	.event_send		= iv_fd_kqueue_event_send,
 };
