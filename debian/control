@@ -8,7 +8,7 @@ Section: libs
 Homepage: http://libivykis.sourceforge.net/
 Vcs-Git: git://git.madhouse-project.org/debian/ivykis.git
 Vcs-Browser: http://git.madhouse-project.org/debian/ivykis/
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ jessie
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ stretch
 
 Package: libivykis0
 Multi-Arch: same
