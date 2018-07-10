@@ -1,3 +1,26 @@
+ivykis (0.36.2-4) unstable; urgency=low
+
+  * New maintainer (closes: #849917).
+  * Update Standards-Version to 3.9.8 .
+
+ -- Laszlo Boszormenyi (GCS) <gcs@debian.org>  Sun, 22 Jan 2017 14:06:11 +0000
+
+ivykis (0.36.2-3) unstable; urgency=medium
+
+  * Orphaning the package.
+  * Standards-Version bumped to 3.9.6, no changes necessary.
+  * Update the Vcs-* fields to point at collab-maint.
+  * Update debian/copyright.
+
+ -- Gergely Nagy <algernon@madhouse-project.org>  Sat, 31 Dec 2016 17:40:39 +0100
+
+ivykis (0.36.2-2) unstable; urgency=low
+
+  * Applied upstream patch to reduce the test AVL tree size, so that the
+    test suite does not time out on m68k.
+
+ -- Gergely Nagy <algernon@madhouse-project.org>  Tue, 27 Aug 2013 11:16:05 +0200
+
 ivykis (0.36.2-1pexip2) pexip; urgency=low
 
   * No-change rebuild
