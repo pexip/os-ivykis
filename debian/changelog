@@ -1,3 +1,9 @@
+ivykis (0.36.2-4pexip1) pexip; urgency=medium
+
+  * Migrate to Stretch
+
+ -- John-Mark Bell <jmb@pexip.com>  Tue, 10 Jul 2018 11:07:28 +0000
+
 ivykis (0.36.2-4) unstable; urgency=low
 
   * New maintainer (closes: #849917).
