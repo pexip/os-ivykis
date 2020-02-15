@@ -18,19 +18,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-struct iv_handle_ {
-	/*
-	 * User data.
-	 */
-	HANDLE			handle;
-	void			*cookie;
-	void			(*handler)(void *);
+#define eventfd_in_use		0
 
-	/*
-	 * Private data.
-	 */
-	struct iv_list_head	list;
-	struct iv_list_head	list_active;
-	struct iv_state		*st;
-	HANDLE			signal_handle;
-};
+extern int eventfd_grab(void);

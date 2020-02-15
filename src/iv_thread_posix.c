@@ -1,6 +1,6 @@
 /*
  * ivykis, an event handling library
- * Copyright (C) 2010 Lennert Buytenhek
+ * Copyright (C) 2010, 2013, 2016 Lennert Buytenhek
  * Dedicated to Marija Kulikova.
  *
  * This library is free software; you can redistribute it and/or modify
@@ -24,50 +24,8 @@
 #include <iv_event.h>
 #include <iv_thread.h>
 #include <iv_tls.h>
-#include <pthread.h>
 #include <string.h>
-#include "config.h"
-
-/* thread ID ****************************************************************/
-#ifdef HAVE_PROCESS_H
-#include <process.h>
-#endif
-#ifdef HAVE_SYS_SYSCALL_H
-#include <sys/syscall.h>
-#endif
-#ifdef HAVE_SYS_THR_H
-/* Older FreeBSDs (6.1) don't include sys/ucontext.h in sys/thr.h.  */
-#include <sys/ucontext.h>
-#include <sys/thr.h>
-#endif
-#ifdef HAVE_THREAD_H
-#include <thread.h>
-#endif
-
-static unsigned long get_thread_id(void)
-{
-	unsigned long thread_id;
-
-#if defined(__NR_gettid)
-	thread_id = syscall(__NR_gettid);
-#elif defined(HAVE_GETTID) && defined(HAVE_PROCESS_H)
-	thread_id = gettid();
-#elif defined(HAVE_LWP_GETTID)
-	thread_id = lwp_gettid();
-#elif defined(HAVE_THR_SELF) && defined(HAVE_SYS_THR_H)
-	long thr;
-	thr_self(&thr);
-	thread_id = (unsigned long)thr;
-#elif defined(HAVE_THR_SELF) && defined(HAVE_THREAD_H)
-	thread_id = thr_self();
-#else
-#warning using pthread_self for get_thread_id
-	thread_id = (unsigned long)pthread_self();
-#endif
-
-	return thread_id;
-}
-
+#include "iv_private.h"
 
 /* data structures and global data ******************************************/
 struct iv_thread {
@@ -80,7 +38,29 @@ struct iv_thread {
 	void			*arg;
 };
 
+static pthr_once_t iv_thread_key_allocated = PTHR_ONCE_INIT;
+static pthr_key_t iv_thread_key;
 static int iv_thread_debug;
+
+
+/* thread state handling ****************************************************/
+static void iv_thread_destructor(void *_thr)
+{
+	struct iv_thread *thr = _thr;
+
+	if (iv_thread_debug)
+		fprintf(stderr, "iv_thread: [%s] terminating\n", thr->name);
+
+	iv_event_post(&thr->dead);
+}
+
+static void iv_thread_allocate_key(void)
+{
+	if (pthr_key_create(&iv_thread_key, iv_thread_destructor)) {
+		iv_fatal("iv_thread_tls_init_thread: failed "
+			 "to allocate TLS key");
+	}
+}
 
 
 /* tls **********************************************************************/
@@ -104,7 +84,7 @@ static void iv_thread_tls_deinit_thread(void *_tinfo)
 		struct iv_thread *thr;
 
 		thr = iv_list_entry(ilh, struct iv_thread, list);
-		pthread_detach(thr->thread_id);
+		pthr_detach(thr->thread_id);
 	}
 }
 
@@ -122,31 +102,14 @@ static void iv_thread_tls_init(void)
 
 
 /* callee thread ************************************************************/
-static void iv_thread_cleanup_handler(void *_thr)
-{
-	struct iv_thread *thr = _thr;
-
-	if (iv_thread_debug)
-		fprintf(stderr, "iv_thread: [%s] was canceled\n", thr->name);
-
-	iv_event_post(&thr->dead);
-}
-
 static void *iv_thread_handler(void *_thr)
 {
 	struct iv_thread *thr = _thr;
 
-	thr->tid = get_thread_id();
+	pthr_setspecific(&iv_thread_key, thr);
+	thr->tid = iv_get_thread_id();
 
-	pthread_cleanup_push(iv_thread_cleanup_handler, thr);
 	thr->start_routine(thr->arg);
-	pthread_cleanup_pop(0);
-
-	if (iv_thread_debug)
-		fprintf(stderr, "iv_thread: [%s] terminating normally\n",
-			thr->name);
-
-	iv_event_post(&thr->dead);
 
 	return NULL;
 }
@@ -157,7 +120,7 @@ static void iv_thread_died(void *_thr)
 {
 	struct iv_thread *thr = _thr;
 
-	pthread_join(thr->thread_id, NULL);
+	pthr_join(thr->thread_id, NULL);
 
 	if (iv_thread_debug)
 		fprintf(stderr, "iv_thread: [%s] joined\n", thr->name);
@@ -168,11 +131,13 @@ static void iv_thread_died(void *_thr)
 	free(thr);
 }
 
-int iv_thread_create(char *name, void (*start_routine)(void *), void *arg)
+int iv_thread_create(const char *name, void (*start_routine)(void *), void *arg)
 {
 	struct iv_thread_thr_info *tinfo = iv_tls_user_ptr(&iv_thread_tls_user);
 	struct iv_thread *thr;
 	int ret;
+
+	pthr_once(&iv_thread_key_allocated, iv_thread_allocate_key);
 
 	thr = malloc(sizeof(*thr));
 	if (thr == NULL)
@@ -188,7 +153,7 @@ int iv_thread_create(char *name, void (*start_routine)(void *), void *arg)
 	thr->start_routine = start_routine;
 	thr->arg = arg;
 
-	ret = pthread_create(&thr->thread_id, NULL, iv_thread_handler, thr);
+	ret = pthr_create(&thr->thread_id, NULL, iv_thread_handler, thr);
 	if (ret)
 		goto out;
 
@@ -205,7 +170,7 @@ out:
 	free(thr);
 
 	if (iv_thread_debug) {
-		fprintf(stderr, "iv_thread: pthread_create for [%s] "
+		fprintf(stderr, "iv_thread: pthr_create for [%s] "
 				"failed with error %d[%s]\n", name, ret,
 					strerror(ret));
 	}
@@ -213,6 +178,8 @@ out:
 	return -1;
 }
 
+
+/* misc functionality *******************************************************/
 void iv_thread_set_debug_state(int state)
 {
 	iv_thread_debug = !!state;
@@ -220,7 +187,7 @@ void iv_thread_set_debug_state(int state)
 
 unsigned long iv_thread_get_id(void)
 {
-	return get_thread_id();
+	return iv_get_thread_id();
 }
 
 void iv_thread_list_children(void)
@@ -229,7 +196,7 @@ void iv_thread_list_children(void)
 	struct iv_list_head *ilh;
 
 	fprintf(stderr, "tid\tname\n");
-	fprintf(stderr, "%lu\tself\n", get_thread_id());
+	fprintf(stderr, "%lu\tself\n", iv_get_thread_id());
 
 	iv_list_for_each (ilh, &tinfo->child_threads) {
 		struct iv_thread *thr;

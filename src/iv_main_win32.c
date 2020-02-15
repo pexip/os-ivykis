@@ -37,13 +37,12 @@ void iv_init(void)
 	st = calloc(1, iv_tls_total_state_size());
 	TlsSetValue(iv_state_index, st);
 
-	st->quit = 0;
-	st->numobjs = 0;
-
 	iv_handle_init(st);
 	iv_task_init(st);
 	iv_time_init(st);
 	iv_timer_init(st);
+
+	iv_event_init(st);
 
 	iv_tls_thread_init(st);
 }
@@ -69,26 +68,32 @@ void iv_main(void)
 
 	st->quit = 0;
 	while (1) {
-		struct timespec to;
+		struct timespec _abs;
+		const struct timespec *abs;
 
-		iv_run_tasks(st);
 		iv_run_timers(st);
+		iv_run_tasks(st);
 
 		if (st->quit || !st->numobjs)
 			break;
 
-		if (iv_pending_tasks(st) || iv_get_soonest_timeout(st, &to)) {
-			to.tv_sec = 0;
-			to.tv_nsec = 0;
+		if (iv_pending_tasks(st)) {
+			_abs.tv_sec = 0;
+			_abs.tv_nsec = 0;
+			abs = &_abs;
+		} else {
+			abs = iv_get_soonest_timeout(st);
 		}
 
-		iv_handle_poll_and_run(st, &to);
+		iv_handle_poll_and_run(st, abs);
 	}
 }
 
 static void __iv_deinit(struct iv_state *st)
 {
 	iv_tls_thread_deinit(st);
+
+	iv_event_deinit(st);
 
 	iv_handle_deinit(st);
 	iv_timer_deinit(st);
