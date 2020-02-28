@@ -1,3 +1,9 @@
+ivykis (0.42.3-1pexip1) pexip; urgency=medium
+
+  * Migrate to Buster
+
+ -- Vincent Sanders <vince@pexip.com>  Fri, 28 Feb 2020 22:44:01 +0000
+
 ivykis (0.42.3-1) unstable; urgency=medium
 
   * New upstream release.
