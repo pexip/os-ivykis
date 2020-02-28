@@ -21,7 +21,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "iv_private.h"
-#include "iv_handle_private.h"
 
 void iv_handle_init(struct iv_state *st)
 {
@@ -73,19 +72,18 @@ void iv_handle_deinit(struct iv_state *st)
 	DeleteCriticalSection(&st->active_handle_list_lock);
 }
 
-void iv_handle_poll_and_run(struct iv_state *st, struct timespec *to)
+void iv_handle_poll_and_run(struct iv_state *st, const struct timespec *abs)
 {
 	struct iv_list_head handles;
 
+	__iv_invalidate_now(st);
+
 	EnterCriticalSection(&st->active_handle_list_lock);
 	if (iv_list_empty(&st->active_with_handler)) {
-		DWORD msec;
 		DWORD ret;
 
-		msec = 1000 * to->tv_sec + (to->tv_nsec + 999999) / 1000000;
-
 		LeaveCriticalSection(&st->active_handle_list_lock);
-		ret = WaitForSingleObjectEx(st->wait, msec, TRUE);
+		ret = WaitForSingleObjectEx(st->wait, to_msec(st, abs), TRUE);
 		EnterCriticalSection(&st->active_handle_list_lock);
 
 		if (ret != WAIT_OBJECT_0 && ret != WAIT_IO_COMPLETION &&
@@ -94,8 +92,6 @@ void iv_handle_poll_and_run(struct iv_state *st, struct timespec *to)
 				 "WaitForSingleObjectEx returned %x",
 				 (int)ret);
 		}
-
-		__iv_invalidate_now(st);
 	}
 	__iv_list_steal_elements(&st->active_with_handler, &handles);
 	LeaveCriticalSection(&st->active_handle_list_lock);
@@ -113,6 +109,11 @@ void iv_handle_poll_and_run(struct iv_state *st, struct timespec *to)
 			st->handled_handle = NULL;
 		}
 	}
+}
+
+const char *iv_poll_method_name(void)
+{
+	return "simple";
 }
 
 void IV_HANDLE_INIT(struct iv_handle *_h)
@@ -228,7 +229,7 @@ void iv_handle_unregister(struct iv_handle *_h)
 		st->handled_handle = NULL;
 }
 
-int iv_handle_registered(struct iv_handle *_h)
+int iv_handle_registered(const struct iv_handle *_h)
 {
 	struct iv_handle_ *h = (struct iv_handle_ *)_h;
 

@@ -30,6 +30,7 @@ SRC			+= iv_event_raw_posix.c		\
 			   iv_popen.c			\
 			   iv_signal.c			\
 			   iv_thread_posix.c		\
+			   iv_tid_posix.c		\
 			   iv_time_posix.c		\
 			   iv_wait.c
 
@@ -59,7 +60,7 @@ SRC			+= iv_inotify.c
 INC			+= include/iv_inotify.h
 endif
 
-LINKFLAGS	= -version-info 3:5:3
+LINKFLAGS	= -version-info 5:5:5
 if HAVE_VERSIONING
 LINKFLAGS	+= -Wl,--version-script,$(top_srcdir)/libivykis.posix.ver
 endif
@@ -72,6 +73,7 @@ SRC			+= iv_event_raw_win32.c		\
 			   iv_handle.c			\
 			   iv_main_win32.c		\
 			   iv_thread_win32.c		\
+			   iv_tid_win32.c		\
 			   iv_time_win32.c
 
 LINKFLAGS = -version-info 0:0:0						\
@@ -89,9 +91,12 @@ include_HEADERS		= $(INC)
 
 nodist_include_HEADERS	= include/iv.h
 
-noinst_HEADERS		= iv_event_private.h		\
-			  iv_fd_private.h		\
-			  iv_handle_private.h		\
+noinst_HEADERS		= eventfd-linux.h		\
+			  eventfd-stub.h		\
+			  iv_event_private.h		\
 			  iv_private.h			\
+			  iv_private_posix.h		\
+			  iv_private_win32.h		\
 			  mutex.h			\
+			  pthr.h			\
 			  spinlock.h

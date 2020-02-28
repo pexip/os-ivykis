@@ -17,7 +17,6 @@ global:
 	iv_event_raw_post;
 
 	# iv_fd
-	iv_poll_method_name;
 	IV_FD_INIT;
 	iv_fd_register;
 	iv_fd_register_try;
@@ -45,6 +44,7 @@ global:
 	iv_quit;
 	iv_main;
 	iv_deinit;
+	iv_poll_method_name;
 
 	# iv_popen
 	iv_popen_request_submit;
@@ -103,3 +103,11 @@ IVYKIS_0.33 {
 	# iv_thread
 	iv_thread_get_id;
 } IVYKIS_0.30;
+
+IVYKIS_0.40 {
+	# iv_tid
+	iv_get_thread_id;
+
+	# iv_timer
+	__iv_now_location_valid;
+} IVYKIS_0.33;

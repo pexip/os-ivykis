@@ -18,9 +18,89 @@
  * Boston, MA 02110-1301, USA.
  */
 
+#include <iv_event_raw.h>
+#include "mutex.h"
+#include "pthr.h"
+
 #define MASKIN		1
 #define MASKOUT		2
 #define MASKERR		4
+
+struct iv_state {
+	/* iv_main_posix.c  */
+	int			quit;
+	int			numobjs;
+
+	/* iv_event.c  */
+	int			event_count;
+	struct iv_task		events_local;
+	struct iv_event_raw	events_kick;
+	___mutex_t		event_list_mutex;
+	struct iv_list_head	events_pending;
+
+	/* iv_fd.c  */
+	int			numfds;
+	struct iv_fd_		*handled_fd;
+	int			last_abs_count;
+	struct timespec		last_abs;
+
+	/* iv_task.c  */
+	struct iv_list_head	tasks;
+	struct iv_list_head	*tasks_current;
+	uint32_t		task_epoch;
+
+	/* iv_timer.c  */
+	struct timespec		time;
+	int			time_valid;
+	int			num_timers;
+	int			rat_depth;
+	union {
+		struct iv_timer_ratnode		*timer_root;
+		struct iv_timer_ratnode		first_leaf;
+	} ratnode;
+
+	/* poll methods  */
+	union {
+#ifdef HAVE_SYS_DEVPOLL_H
+		struct {
+			struct iv_avl_tree	fds;
+			int			poll_fd;
+			struct iv_list_head	notify;
+		} dev_poll;
+#endif
+
+#ifdef HAVE_EPOLL_CREATE
+		struct {
+			struct iv_list_head	notify;
+			int			epoll_fd;
+			int			timer_fd;
+		} epoll;
+#endif
+
+#ifdef HAVE_KQUEUE
+		struct {
+			struct iv_list_head	notify;
+			int			kqueue_fd;
+			int			timeout_pending;
+			const struct timespec	*timeout;
+		} kqueue;
+#endif
+
+		struct {
+			struct pollfd		*pfds;
+			struct iv_fd_		**fds;
+			int			num_regd_fds;
+		} poll;
+
+#ifdef HAVE_PORT_CREATE
+		struct {
+			struct iv_list_head	notify;
+			int			port_fd;
+			timer_t			timer_id;
+		} port;
+#endif
+	} u;
+};
 
 struct iv_fd_ {
 	/*
@@ -39,20 +119,20 @@ struct iv_fd_ {
 	 * active.
 	 */
 	struct iv_list_head	list_active;
-	unsigned		ready_bands:3;
+	uint8_t			ready_bands;
 
 	/*
 	 * Reflects whether the fd has been registered with
 	 * iv_fd_register().  Will be zero in ->notify_fd() if the
 	 * fd is being unregistered.
 	 */
-	unsigned		registered:1;
+	uint8_t			registered;
 
 	/*
 	 * ->wanted_bands is set by the ivykis core to indicate
 	 * which bands currenty have handlers registered for them.
 	 */
-	unsigned		wanted_bands:3;
+	uint8_t			wanted_bands;
 
 	/*
 	 * ->registered_bands is maintained by the poll method to
@@ -60,7 +140,7 @@ struct iv_fd_ {
 	 * kernel, so that the ivykis core knows when to call
 	 * the poll method's ->notify_fd() on an fd.
 	 */
-	unsigned		registered_bands:3;
+	uint8_t			registered_bands;
 
 #if defined(HAVE_SYS_DEVPOLL_H) || defined(HAVE_EPOLL_CREATE) ||	\
     defined(HAVE_KQUEUE) || defined(HAVE_PORT_CREATE)
@@ -88,8 +168,11 @@ struct iv_fd_ {
 struct iv_fd_poll_method {
 	char	*name;
 	int	(*init)(struct iv_state *st);
-	void	(*poll)(struct iv_state *st,
-			struct iv_list_head *active, struct timespec *to);
+	int	(*set_poll_timeout)(struct iv_state *st,
+				    const struct timespec *abs);
+	void	(*clear_poll_timeout)(struct iv_state *st);
+	int	(*poll)(struct iv_state *st, struct iv_list_head *active,
+			const struct timespec *abs);
 	void	(*register_fd)(struct iv_state *st, struct iv_fd_ *fd);
 	void	(*unregister_fd)(struct iv_state *st, struct iv_fd_ *fd);
 	void	(*notify_fd)(struct iv_state *st, struct iv_fd_ *fd);
@@ -100,20 +183,39 @@ struct iv_fd_poll_method {
 	void	(*event_send)(struct iv_state *dest);
 };
 
+extern pthr_key_t iv_state_key;
+
+static inline int is_mt_app(void)
+{
+	return pthreads_available();
+}
+
+static inline struct iv_state *iv_get_state(void)
+{
+	return pthr_getspecific(&iv_state_key);
+}
+
+
 extern int maxfd;
-extern struct iv_fd_poll_method *method;
+extern const struct iv_fd_poll_method *method;
 
-extern struct iv_fd_poll_method iv_fd_poll_method_dev_poll;
-extern struct iv_fd_poll_method iv_fd_poll_method_epoll;
-extern struct iv_fd_poll_method iv_fd_poll_method_kqueue;
-extern struct iv_fd_poll_method iv_fd_poll_method_poll;
-extern struct iv_fd_poll_method iv_fd_poll_method_port;
-
-/* iv_event_posix.c */
-void iv_event_run_pending_events(void);
+extern const struct iv_fd_poll_method iv_fd_poll_method_dev_poll;
+extern const struct iv_fd_poll_method iv_fd_poll_method_epoll;
+extern const struct iv_fd_poll_method iv_fd_poll_method_epoll_timerfd;
+extern const struct iv_fd_poll_method iv_fd_poll_method_kqueue;
+extern const struct iv_fd_poll_method iv_fd_poll_method_poll;
+extern const struct iv_fd_poll_method iv_fd_poll_method_port;
+extern const struct iv_fd_poll_method iv_fd_poll_method_port_timer;
+extern const struct iv_fd_poll_method iv_fd_poll_method_ppoll;
 
 /* iv_fd.c */
+void iv_fd_init(struct iv_state *st);
+void iv_fd_deinit(struct iv_state *st);
+int iv_fd_poll_and_run(struct iv_state *st, const struct timespec *abs);
 void iv_fd_make_ready(struct iv_list_head *active,
 		      struct iv_fd_ *fd, int bands);
 void iv_fd_set_cloexec(int fd);
 void iv_fd_set_nonblock(int fd);
+
+/* iv_signal.c */
+void iv_signal_child_reset_postfork(void);

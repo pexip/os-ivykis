@@ -2,12 +2,12 @@ Source: ivykis
 Priority: extra
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Laszlo Boszormenyi (GCS) <gcs@debian.org>
-Build-Depends: debhelper (>= 9~), dh-autoreconf
-Standards-Version: 3.9.8
+Build-Depends: debhelper (>= 11~)
+Standards-Version: 4.1.4
 Section: libs
 Homepage: http://libivykis.sourceforge.net/
-Vcs-Git: git://anonscm.debian.org/collab-maint/ivykis.git -b debian
-Vcs-Browser: http://anonscm.debian.org/cgit/collab-maint/ivykis.git?h=debian
+#Vcs-Git: git://anonscm.debian.org/collab-maint/ivykis.git -b debian
+#Vcs-Browser: http://anonscm.debian.org/cgit/collab-maint/ivykis.git?h=debian
 XS-Pexip-Upstream: http://ftp.debian.org/debian/ buster
 
 Package: libivykis0

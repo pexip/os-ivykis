@@ -35,11 +35,11 @@ struct iv_wait_interest {
 	pid_t		pid;
 	void		*cookie;
 	void		(*handler)(void *cookie, int status,
-				   struct rusage *rusage);
+				   const struct rusage *rusage);
 
 	struct iv_avl_node	avl_node;
 	struct iv_event		ev;
-	struct iv_list_head	events;
+	struct iv_list_head	events_pending;
 	void			*dummy;
 	unsigned int		flags;
 };
@@ -52,7 +52,7 @@ void iv_wait_interest_register(struct iv_wait_interest *this);
 int iv_wait_interest_register_spawn(struct iv_wait_interest *this,
 				    void (*fn)(void *cookie), void *cookie);
 void iv_wait_interest_unregister(struct iv_wait_interest *this);
-int iv_wait_interest_kill(struct iv_wait_interest *this, int sig);
+int iv_wait_interest_kill(const struct iv_wait_interest *this, int sig);
 
 #ifdef __cplusplus
 }

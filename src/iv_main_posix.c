@@ -20,26 +20,21 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include "iv_private.h"
 
-int				iv_state_key_allocated;
-pthread_key_t			iv_state_key;
-#ifdef HAVE_THREAD
-__thread struct iv_state	*__st;
-#endif
+static int	iv_state_key_allocated;
+pthr_key_t	iv_state_key;
 
 static void __iv_deinit(struct iv_state *st)
 {
 	iv_tls_thread_deinit(st);
 
+	iv_event_deinit(st);
+
 	iv_fd_deinit(st);
 	iv_timer_deinit(st);
 
-	pthread_setspecific(iv_state_key, NULL);
-#ifdef HAVE_THREAD
-	__st = NULL;
-#endif
+	pthr_setspecific(&iv_state_key, NULL);
 
 	free(st);
 }
@@ -48,7 +43,7 @@ static void iv_state_destructor(void *data)
 {
 	struct iv_state *st = data;
 
-	pthread_setspecific(iv_state_key, st);
+	pthr_setspecific(&iv_state_key, st);
 	__iv_deinit(st);
 }
 
@@ -57,35 +52,27 @@ void iv_init(void)
 	struct iv_state *st;
 
 	if (!iv_state_key_allocated) {
-		if (pthread_key_create(&iv_state_key, iv_state_destructor))
+		if (pthr_key_create(&iv_state_key, iv_state_destructor))
 			iv_fatal("iv_init: failed to allocate TLS key");
 		iv_state_key_allocated = 1;
 	}
 
 	st = calloc(1, iv_tls_total_state_size());
 
-	pthread_setspecific(iv_state_key, st);
-#ifdef HAVE_THREAD
-	__st = st;
-#endif
-
-	st->numobjs = 0;
+	pthr_setspecific(&iv_state_key, st);
 
 	iv_fd_init(st);
 	iv_task_init(st);
 	iv_timer_init(st);
+
+	iv_event_init(st);
 
 	iv_tls_thread_init(st);
 }
 
 int iv_inited(void)
 {
-#ifndef HAVE_THREAD
-	if (!iv_state_key_allocated)
-		return 0;
-#endif
-
-	return iv_get_state() != NULL;
+	return iv_state_key_allocated && (iv_get_state() != NULL);
 }
 
 void iv_quit(void)
@@ -98,23 +85,31 @@ void iv_quit(void)
 void iv_main(void)
 {
 	struct iv_state *st = iv_get_state();
+	int run_timers;
 
 	st->quit = 0;
-	while (1) {
-		struct timespec to;
 
+	run_timers = 1;
+	while (1) {
+		struct timespec _abs;
+		const struct timespec *abs;
+
+		if (run_timers)
+			iv_run_timers(st);
 		iv_run_tasks(st);
-		iv_run_timers(st);
 
 		if (st->quit || !st->numobjs)
 			break;
 
-		if (iv_pending_tasks(st) || iv_get_soonest_timeout(st, &to)) {
-			to.tv_sec = 0;
-			to.tv_nsec = 0;
+		if (iv_pending_tasks(st)) {
+			_abs.tv_sec = 0;
+			_abs.tv_nsec = 0;
+			abs = &_abs;
+		} else {
+			abs = iv_get_soonest_timeout(st);
 		}
 
-		iv_fd_poll_and_run(st, &to);
+		run_timers = iv_fd_poll_and_run(st, abs);
 	}
 }
 

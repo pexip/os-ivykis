@@ -1,8 +1,10 @@
 AC_PREREQ(2.59)
-AC_INIT([ivykis], [0.36.2], [libivykis-discuss@lists.sourceforge.net])
+AC_INIT([ivykis], [0.42.3], [libivykis-discuss@lists.sourceforge.net])
 AC_CONFIG_SRCDIR([src/iv_avl.c])
+AC_CONFIG_SUBDIRS([test.mt])
 AC_CONFIG_HEADER(config.h)
 AM_INIT_AUTOMAKE([foreign])
+m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES])
 
 #
 # On AIX 7.1, prevent AC_PROG_CC from adding -g to CFLAGS, as that
@@ -13,7 +15,7 @@ AM_INIT_AUTOMAKE([foreign])
 AC_CANONICAL_HOST
 case $host_os in
 aix7.*)
-	ac_cv_prog_cc_g=no 
+	ac_cv_prog_cc_g=no
 	;;
 *)
 	;;
@@ -50,41 +52,6 @@ AC_COMPILE_IFELSE([AC_LANG_SOURCE(
 if test $ac_cv_host_system = posix
 then
 
-# Check for __thread.
-AC_MSG_CHECKING([for working __thread])
-case $host_os-$host_cpu in
-aix*)
-	#
-	# On at least AIX 5.1 and 7.1, __thread seems to be silently
-	# ignored, and different threads get the same storage location
-	# for __thread variables.
-	#
-	AC_MSG_RESULT([no])
-	;;
-netbsd*)
-	#
-	# Unspecified brokenness on NetBSD 5.1.
-	#
-	AC_MSG_RESULT([no])
-	;;
-solaris*-sparc)
-	#
-	# On at least Solaris 10 for SPARC, use of __thread produces
-	# the following linker error: "ld: fatal: relocation error:
-	# R_SPARC_TLS_DTPOFF32: file lib/.libs/libivykis.a(iv_main.o):
-	# symbol __st: offset 0xfeee01e5 is non-aligned".
-	#
-	AC_MSG_RESULT([no])
-	;;
-*)
-	_AC_COMPILE_IFELSE([AC_LANG_SOURCE(static __thread int p = 0;)],
-		[AC_DEFINE(HAVE_THREAD, 1, Define to 1 if compiler
-					   supports __thread.)
-		 AC_MSG_RESULT([yes])],
-		[AC_MSG_RESULT([no])])
-	;;
-esac
-
 # OS-specific preprocessor defines.
 case $host_os in
 hpux*)
@@ -102,54 +69,13 @@ osf*)
 	#
 	CFLAGS="$CFLAGS -D_BSD -D_POSIX_PII_SOCKET"
 	;;
+solaris*)
+	#
+	# On Solaris, we want -D_REENTRANT, so that we get the
+	# threadsafe version of 'errno'.
+	#
+	CFLAGS="$CFLAGS -D_REENTRANT"
 esac
-
-#
-# Check for pthreads support.
-#
-# At least Tru64 needs -pthread, to avoid the following error when
-# including pthread.h:
-#
-#	pthread.h:339:4: error: #error "Please compile the module
-#	including pthread.h with -pthread"
-#
-ac_save_CFLAGS=$CFLAGS
-ac_save_c_werror_flag=$ac_c_werror_flag
-ac_c_werror_flag=yes
-AC_CACHE_CHECK(whether $CC accepts -pthread, ac_cv_prog_cc_pthread,
-	[ac_cv_prog_cc_pthread=no
-	 CFLAGS="-pthread"
-	 _AC_COMPILE_IFELSE([AC_LANG_PROGRAM()],
-		[ac_cv_prog_cc_pthread=yes], [])
-	])
-if test $ac_cv_prog_cc_pthread = yes
-then
-	CFLAGS="$ac_save_CFLAGS -pthread"
-else
-	CFLAGS=$ac_save_CFLAGS
-fi
-ac_c_werror_flag=$ac_save_c_werror_flag
-
-#
-# At least Solaris 11 for x86 needs building with -pthreads to
-# avoid run-time breakage in multithreaded applications.
-#
-ac_save_CFLAGS=$CFLAGS
-ac_save_c_werror_flag=$ac_c_werror_flag
-ac_c_werror_flag=yes
-AC_CACHE_CHECK(whether $CC accepts -pthreads, ac_cv_prog_cc_pthreads,
-	[ac_cv_prog_cc_pthreads=no
-	 CFLAGS="-pthreads"
-	 _AC_COMPILE_IFELSE([AC_LANG_PROGRAM()],
-		[ac_cv_prog_cc_pthreads=yes], [])
-	])
-if test $ac_cv_prog_cc_pthreads = yes
-then
-	CFLAGS="$ac_save_CFLAGS -pthreads"
-else
-	CFLAGS=$ac_save_CFLAGS
-fi
-ac_c_werror_flag=$ac_save_c_werror_flag
 
 #
 # On Linux, linking against libpthread.so.0 doesn't give you
@@ -157,67 +83,11 @@ ac_c_werror_flag=$ac_save_c_werror_flag
 # which doesn't get pulled in if libpthread.so.0 is pulled in
 # indirectly, e.g. via -lrt, but does get pulled in if you link against
 # -lpthread, as libpthread.so is a linker script that references both
-# libpthread.so.0 and libpthread_nonshared.a.  Therefore, we test for
-# pthread_atfork(), to make sure that libpthread.so really does get
-# pulled in explicitly via -lpthread rather than implicitly via another
-# shared library dependency.
+# libpthread.so.0 and libpthread_nonshared.a.  As we can link in
+# libpthread_nonshared.a without pulling in libpthread.so.0, explicitly
+# link in libpthread_nonshared.a if it is available.
 #
-# However, on FreeBSD, pthread_atfork() is provided by libc.so, and
-# so, testing for pthread_atfork() in AC_SEARCH_LIBS() doesn't end up
-# making the other pthreads functions available in the linking stage.
-# Additionally test for pthread_create() to handle this.
-#
-# On SCO OpenServer Release 6 and SCO UnixWare 7.1.4, the pthread
-# functions appear to live in libthread, so check for that in
-# addition to checking for libpthread.
-#
-# Tru64 uses mangled symbol names in its libpthread, and has some
-# preprocessor magic in its pthread.h to do the same mangling, and
-# so, testing for pthreads symbols without including pthread.h
-# doesn't work.  Since AC_SEARCH_LIBS() doesn't allow specifying a
-# header file to be included for tests (and on Tru64, we can't
-# include pthread.h without additionally specifying -pthread), we'll
-# check for __pthread_create if pthread_create does not exist.
-#
-# On HP-UX, libpthread uses mangled symbol names like on Tru64, but
-# what's worse, the HP-UX C library provides stub versions of almost
-# all libpthread functions that return errors instead of doing what
-# they are supposed to, and there's no way to detect this at compile
-# time.  However, there are a number of symbols in libpthread that
-# the C library doesn't define stubs for, and we can test for one of
-# those (pthread_trace_notify_np is one of those symbols).
-#
-AC_SEARCH_LIBS([pthread_atfork], [pthread thread], [],
-	AC_MSG_ERROR(pthreads support is required to build ivykis.))
-AC_SEARCH_LIBS([pthread_create], [pthread], [],
-	AC_SEARCH_LIBS([__pthread_create], [pthread], [],
-	AC_SEARCH_LIBS([pthread_trace_notify_np], [pthread], [],
-		AC_MSG_ERROR(pthreads support is required to build ivykis.))))
-
-#
-# Check for __sync_lock_test_and_set().  We can't use AC_CHECK_FUNCS
-# for this, as autoconf will spit out a dummy definition for the
-# function we are testing for, and call it without any arguments,
-# which will prevent gcc from using the intrinsic.
-#
-AC_CACHE_CHECK(for __sync_lock_test_and_set(),
-	ac_cv_func_sync_lock_test_and_set,
-	[ac_cv_func_sync_lock_test_and_set=no
-	 _AC_LINK_IFELSE([AC_LANG_SOURCE(
-		int main()
-		{
-			unsigned long test;
-			while (__sync_lock_test_and_set(&test, 1) == 1)
-				;
-			return 0;
-		}
-	 )], [ac_cv_func_sync_lock_test_and_set=yes], [])
-	])
-if test $ac_cv_func_sync_lock_test_and_set = yes
-then
-	AC_DEFINE(HAVE_SYNC_LOCK_TEST_AND_SET, 1,
-		  Define to 1 if system has __sync_lock_test_and_set)
-fi
+AC_CHECK_LIB([pthread_nonshared], [pthread_atfork])
 
 # Checks for header files.
 AC_CHECK_HEADERS([process.h])
@@ -237,6 +107,9 @@ AC_CACHE_CHECK(for linux/netfilter_ipv4.h, ac_cv_header_linux_netfilter_ipv4_h,
 	 )], [ac_cv_header_linux_netfilter_ipv4_h=yes], [])
 	])
 
+# Check for pthread_spinlock_t.
+AC_CHECK_TYPES([pthread_spinlock_t], [], [], [[#include <pthread.h>]])
+
 # Check which header file defines 'struct timespec'.
 for hdr in sys/time.h sys/timers.h time.h pthread.h
 do
@@ -250,6 +123,19 @@ then
 	AC_MSG_ERROR(Can't find definition of struct timespec.)
 fi
 AC_SUBST(ac_cv_timespec_hdr)
+
+#
+# Check for working support for #pragma weak.  This doesn't work
+# quite right on HP-UX.
+#
+case $host_os in
+hpux*)
+	;;
+*)
+	AC_DEFINE(HAVE_PRAGMA_WEAK, 1,
+		  Define to 1 if system has a working pragma weak)
+	;;
+esac
 
 #
 # Check for clock_gettime() and available time sources.  (We cannot
@@ -273,6 +159,22 @@ then
 	then
 		AC_DEFINE(HAVE_CLOCK_MONOTONIC, 1,
 			  Define to 1 if system has CLOCK_MONOTONIC)
+	fi
+
+	AC_CACHE_CHECK(for CLOCK_MONOTONIC_FAST,
+		ac_cv_define_clock_monotonic_fast,
+		[ac_cv_define_clock_monotonic_fast=no
+		 _AC_COMPILE_IFELSE([AC_LANG_SOURCE(
+			#include <sys/time.h>
+			#include <time.h>
+			int p = CLOCK_MONOTONIC_FAST;
+		 )], [ac_cv_define_clock_monotonic_fast=yes], [])
+		])
+
+	if test $ac_cv_define_clock_monotonic_fast = yes
+	then
+		AC_DEFINE(HAVE_CLOCK_MONOTONIC_FAST, 1,
+			  Define to 1 if system has CLOCK_MONOTONIC_FAST)
 	fi
 
 	AC_CACHE_CHECK(for CLOCK_REALTIME, ac_cv_define_clock_realtime,
@@ -304,9 +206,11 @@ AC_CHECK_FUNCS([gettid])
 AC_CHECK_FUNCS([inotify_init])
 AC_CHECK_FUNCS([kqueue])
 AC_CHECK_FUNCS([lwp_gettid])
+AC_CHECK_FUNCS([pipe2])
 AC_CHECK_FUNCS([port_create])
-AC_CHECK_FUNCS([pthread_spin_lock])
+AC_CHECK_FUNCS([ppoll])
 AC_CHECK_FUNCS([thr_self])
+AC_CHECK_FUNCS([timerfd_create])
 
 #
 # Only test for splice(2) on Linux, to avoid confusing it with a
@@ -381,7 +285,8 @@ AM_CONDITIONAL([HAVE_KQUEUE], [test x$ac_cv_func_kqueue = xyes])
 AM_CONDITIONAL([HAVE_PORT], [test x$ac_cv_func_port_create = xyes])
 
 # Other conditionals.
-AM_CONDITIONAL([BUILD_ON_CYGWIN], [test $build_os = cygwin])
+AM_CONDITIONAL([CASE_INSENSITIVE_FS],
+		[test $srcdir/COPYING -ef $srcdir/copying])
 AM_CONDITIONAL([HAVE_INOTIFY], [test x$ac_cv_func_inotify_init = xyes])
 AM_CONDITIONAL([HAVE_LINUX_NETFILTER_IPV4_H],
 		[test x$ac_cv_header_linux_netfilter_ipv4_h = xyes])
