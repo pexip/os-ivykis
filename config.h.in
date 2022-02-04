@@ -36,6 +36,9 @@
 /* Define to 1 if you have the `kqueue' function. */
 #undef HAVE_KQUEUE
 
+/* Define to 1 if you have the `c_nonshared' library. */
+#undef HAVE_LIBC_NONSHARED
+
 /* Define to 1 if you have the `pthread_nonshared' library
    (-lpthread_nonshared). */
 #undef HAVE_LIBPTHREAD_NONSHARED
