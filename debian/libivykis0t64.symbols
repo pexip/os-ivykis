@@ -3,3 +3,5 @@ libivykis.so.0 #PACKAGE# #MINVER#
  (symver)IVYKIS_0.30 0.30
  (symver)IVYKIS_0.33 0.33
  (symver)IVYKIS_0.40 0.42
+ IVYKIS_0.42@IVYKIS_0.42 0.43
+ iv_work_pool_submit_continuation@IVYKIS_0.42 0.43

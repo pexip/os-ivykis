@@ -21,6 +21,9 @@
 /* Define to 1 if you have the `epoll_create1' function. */
 #undef HAVE_EPOLL_CREATE1
 
+/* Define to 1 if you have the `epoll_pwait2' function. */
+#undef HAVE_EPOLL_PWAIT2
+
 /* Define to 1 if you have the `eventfd' function. */
 #undef HAVE_EVENTFD
 
@@ -46,9 +49,6 @@
 /* Define to 1 if you have the `lwp_gettid' function. */
 #undef HAVE_LWP_GETTID
 
-/* Define to 1 if you have the <memory.h> header file. */
-#undef HAVE_MEMORY_H
-
 /* Define to 1 if you have the `pipe2' function. */
 #undef HAVE_PIPE2
 
@@ -64,14 +64,17 @@
 /* Define to 1 if you have the <process.h> header file. */
 #undef HAVE_PROCESS_H
 
-/* Define to 1 if the system has the type `pthread_spinlock_t'. */
-#undef HAVE_PTHREAD_SPINLOCK_T
+/* Define to 1 if you have the pthread_spin_trylock function */
+#undef HAVE_PTHREAD_SPIN_TRYLOCK
 
 /* Define to 1 if you have the `splice' function. */
 #undef HAVE_SPLICE
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
+
+/* Define to 1 if you have the <stdio.h> header file. */
+#undef HAVE_STDIO_H
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
@@ -139,7 +142,9 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
-/* Define to 1 if you have the ANSI C header files. */
+/* Define to 1 if all of the C90 standard headers exist (not just the ones
+   required in a freestanding environment). This macro is provided for
+   backward compatibility; new code need not use it. */
 #undef STDC_HEADERS
 
 /* Version number of package */

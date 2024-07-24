@@ -1,5 +1,5 @@
 AC_PREREQ(2.59)
-AC_INIT([ivykis], [0.42.4], [libivykis-discuss@lists.sourceforge.net])
+AC_INIT([ivykis], [0.43.2], [libivykis-discuss@lists.sourceforge.net])
 AC_CONFIG_SRCDIR([src/iv_avl.c])
 AC_CONFIG_SUBDIRS([test.mt])
 AC_CONFIG_HEADER(config.h)
@@ -123,8 +123,11 @@ AC_CACHE_CHECK(for linux/netfilter_ipv4.h, ac_cv_header_linux_netfilter_ipv4_h,
 	 )], [ac_cv_header_linux_netfilter_ipv4_h=yes], [])
 	])
 
-# Check for pthread_spinlock_t.
-AC_CHECK_TYPES([pthread_spinlock_t], [], [], [[#include <pthread.h>]])
+# Check for pthread_spin_trylock
+AC_CHECK_LIB([pthread],
+	[pthread_spin_trylock],
+	[AC_DEFINE(HAVE_PTHREAD_SPIN_TRYLOCK, 1,
+		   Define to 1 if you have the pthread_spin_trylock function)])
 
 # Check which header file defines 'struct timespec'.
 for hdr in sys/time.h sys/timers.h time.h pthread.h
@@ -217,6 +220,7 @@ AC_SEARCH_LIBS([thr_self], [thread])
 # Checks for library functions.
 AC_CHECK_FUNCS([epoll_create])
 AC_CHECK_FUNCS([epoll_create1])
+AC_CHECK_FUNCS([epoll_pwait2])
 AC_CHECK_FUNCS([eventfd])
 AC_CHECK_FUNCS([gettid])
 AC_CHECK_FUNCS([inotify_init])
