@@ -30,7 +30,7 @@
 
 static int epoll_support = 2;
 
-static int epollfd_grab(int maxfd)
+static int epollfd_grab(void)
 {
 #if (defined(__NR_epoll_create1) || defined(HAVE_EPOLL_CREATE1)) && \
      defined(EPOLL_CLOEXEC)
@@ -52,7 +52,7 @@ static int epollfd_grab(int maxfd)
 	if (epoll_support) {
 		int ret;
 
-		ret = epoll_create(maxfd);
+		ret = epoll_create(1);
 		if (ret >= 0 || errno != ENOSYS) {
 			if (ret >= 0)
 				iv_fd_set_cloexec(ret);
@@ -69,7 +69,7 @@ static int iv_fd_epoll_init(struct iv_state *st)
 {
 	int fd;
 
-	fd = epollfd_grab(maxfd);
+	fd = epollfd_grab();
 	if (fd < 0)
 		return -1;
 
@@ -143,6 +143,41 @@ static void iv_fd_epoll_flush_pending(struct iv_state *st)
 	}
 }
 
+#ifdef HAVE_EPOLL_PWAIT2
+static int epoll_pwait2_support = 1;
+#endif
+
+static int iv_fd_epoll_wait(struct iv_state *st, struct epoll_event *events,
+			    int maxevents, const struct timespec *abs)
+{
+	int epfd = st->u.epoll.epoll_fd;
+
+#ifdef HAVE_EPOLL_PWAIT2
+	if (epoll_pwait2_support) {
+		struct timespec rel;
+		int ret;
+
+		ret = epoll_pwait2(epfd, events, maxevents,
+				   to_relative(st, &rel, abs), NULL);
+
+		/*
+		 * Some container technologies (at least podman on CentOS
+		 * 7 and docker on Debian Buster, according to reports)
+		 * cause epoll_pwait2() to return -EPERM.  It is unclear
+		 * what security benefits this provides, but we'll have to
+		 * handle this by falling back to epoll_wait() just as if
+		 * -ENOSYS had been returned.
+		 */
+		if (ret >= 0 || (errno != EPERM && errno != ENOSYS))
+			return ret;
+
+		epoll_pwait2_support = 0;
+	}
+#endif
+
+	return epoll_wait(epfd, events, maxevents, to_msec(st, abs));
+}
+
 static int iv_fd_epoll_poll(struct iv_state *st,
 			    struct iv_list_head *active,
 			    const struct timespec *abs)
@@ -154,8 +189,7 @@ static int iv_fd_epoll_poll(struct iv_state *st,
 
 	iv_fd_epoll_flush_pending(st);
 
-	ret = epoll_wait(st->u.epoll.epoll_fd, batch, ARRAY_SIZE(batch),
-			 to_msec(st, abs));
+	ret = iv_fd_epoll_wait(st, batch, ARRAY_SIZE(batch), abs);
 
 	__iv_invalidate_now(st);
 
@@ -433,8 +467,7 @@ static int iv_fd_epoll_timerfd_poll(struct iv_state *st,
 
 	run_timers = !!(abs != NULL);
 
-	ret = epoll_wait(st->u.epoll.epoll_fd, batch, ARRAY_SIZE(batch),
-			 to_msec(st, abs));
+	ret = iv_fd_epoll_wait(st, batch, ARRAY_SIZE(batch), abs);
 
 	__iv_invalidate_now(st);
 
